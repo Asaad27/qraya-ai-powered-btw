@@ -7,6 +7,7 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import com.asaad27.qraya.data.model.PdfInfo
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -19,12 +20,13 @@ import kotlinx.coroutines.withContext
 
 class PdfReaderRepository(
     private val applicationContext: Context,
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : IPdfReaderRepository {
 
     private var fileDesc: ParcelFileDescriptor? = null
     private var renderer: PdfRenderer? = null
 
-    override suspend fun loadPdf(uri: Uri): Result<PdfInfo> = withContext(Dispatchers.IO) {
+    override suspend fun loadPdf(uri: Uri): Result<PdfInfo> = withContext(dispatcher) {
         runCatching {
             cleanup()
 
@@ -41,7 +43,7 @@ class PdfReaderRepository(
         width: Int,
         height: Int
     ): Result<Bitmap> {
-        return withContext(Dispatchers.IO) {
+        return withContext(dispatcher) {
             runCatching {
                 renderer?.openPage(pageIndex)?.use { page ->
                     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
@@ -60,7 +62,7 @@ class PdfReaderRepository(
         pages: List<Int>,
         width: Int,
         height: Int
-    ): Result<List<Bitmap>> = withContext(Dispatchers.IO) {
+    ): Result<List<Bitmap>> = withContext(dispatcher) {
         runCatching {
             coroutineScope {
                 pages.map { pageIndex ->
@@ -83,7 +85,7 @@ class PdfReaderRepository(
                 send(result.map { pageIndex to it })
             }
         }
-    }.flowOn(Dispatchers.IO)
+    }.flowOn(dispatcher)
 
     override fun cleanup() {
         fileDesc?.close()
