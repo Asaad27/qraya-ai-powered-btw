@@ -20,18 +20,20 @@ import kotlinx.coroutines.withContext
 
 class PdfReaderRepository(
     private val applicationContext: Context,
-    private val dispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private var rendererFactory: (ParcelFileDescriptor) -> IPdfRenderer = { AndroidPdfRenderer(PdfRenderer(it)) },
+    private val matrixFactory: () -> Matrix = { Matrix() }
 ) : IPdfReaderRepository {
 
     private var fileDesc: ParcelFileDescriptor? = null
-    private var renderer: PdfRenderer? = null
+    private var renderer: IPdfRenderer? = null
 
     override suspend fun loadPdf(uri: Uri): Result<PdfInfo> = withContext(dispatcher) {
         runCatching {
             cleanup()
 
             fileDesc = applicationContext.contentResolver.openFileDescriptor(uri, "r")?.also {
-                renderer = PdfRenderer(it)
+                renderer = rendererFactory(it)
             } ?: throw Exception("Failed to open PDF file descriptor")
 
             PdfInfo(pageCount = renderer?.pageCount ?: 0)
@@ -47,7 +49,7 @@ class PdfReaderRepository(
             runCatching {
                 renderer?.openPage(pageIndex)?.use { page ->
                     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                    val matrix = Matrix().apply {
+                    val matrix = matrixFactory().apply {
                         setScale(width.toFloat() / page.width, height.toFloat() / page.height)
                     }
                     page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)

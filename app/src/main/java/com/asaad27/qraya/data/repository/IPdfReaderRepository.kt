@@ -12,3 +12,4 @@ interface IPdfReaderRepository {
     fun renderPagesFlow(pages: List<Int>, width: Int, height: Int): Flow<Result<Pair<Int, Bitmap>>>
     fun cleanup()
 }
+
