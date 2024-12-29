@@ -94,7 +94,7 @@ class PdfViewModel(
         }
     }
 
-    override fun onCleared() {
+    public override fun onCleared() {
         super.onCleared()
         pdfReaderRepository.cleanup()
     }
