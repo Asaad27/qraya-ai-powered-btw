@@ -42,6 +42,11 @@ android {
 dependencies {
 
     implementation(libs.koin.android)
+
+    implementation(libs.ktor.client.android)
+    implementation(libs.coil.network.ktor3)
+    implementation(libs.coil.compose)
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
