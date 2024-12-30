@@ -38,7 +38,9 @@ import androidx.xr.compose.subspace.layout.height
 import androidx.xr.compose.subspace.layout.movable
 import androidx.xr.compose.subspace.layout.resizable
 import androidx.xr.compose.subspace.layout.width
+import com.asaad27.qraya.ui.pdf.screen.PdfViewerScreen
 import com.asaad27.qraya.ui.theme.QrayaTheme
+import org.koin.androidx.compose.KoinAndroidContext
 
 class MainActivity : ComponentActivity() {
 
@@ -49,13 +51,15 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             QrayaTheme {
-                val session = LocalSession.current
-                if (LocalSpatialCapabilities.current.isSpatialUiEnabled) {
-                    Subspace {
-                        MySpatialContent(onRequestHomeSpaceMode = { session?.requestHomeSpaceMode() })
+                KoinAndroidContext {
+                    val session = LocalSession.current
+                    if (LocalSpatialCapabilities.current.isSpatialUiEnabled) {
+                        Subspace {
+                            MySpatialContent(onRequestHomeSpaceMode = { session?.requestHomeSpaceMode() })
+                        }
+                    } else {
+                        My2DContent(onRequestFullSpaceMode = { session?.requestFullSpaceMode() })
                     }
-                } else {
-                    My2DContent(onRequestFullSpaceMode = { session?.requestFullSpaceMode() })
                 }
             }
         }
@@ -108,7 +112,7 @@ fun My2DContent(onRequestFullSpaceMode: () -> Unit) {
 
 @Composable
 fun MainContent(modifier: Modifier = Modifier) {
-    Text(text = stringResource(R.string.hello_android_xr), modifier = modifier)
+    PdfViewerScreen(modifier = modifier)
 }
 
 @Composable

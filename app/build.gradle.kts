@@ -42,6 +42,7 @@ android {
 dependencies {
 
     implementation(libs.koin.android)
+    implementation(libs.koin.androidx.compose)
 
     implementation(libs.ktor.client.android)
     implementation(libs.coil.network.ktor3)
