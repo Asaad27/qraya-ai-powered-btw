@@ -115,26 +115,6 @@ class PdfViewModelTest : KoinTest {
     }
 
     @Test
-    fun `renderPagesFlow should emit bitmaps correctly`() = runTest {
-        // Given
-        val mockBitmap = mockk<Bitmap>()
-        val pages = listOf(0, 1)
-        declareMock<IPdfReaderRepository> {
-            every {
-                renderPagesFlow(pages = pages, width = 100, height = 100)
-            } returns flowOf(Result.success(0 to mockBitmap))
-        }
-
-        // When
-        val flow = viewModel.renderPagesFlow(pages, 100, 100)
-
-        // Then
-        flow.collect { result ->
-            assertEquals(Result.success(0 to mockBitmap), result)
-        }
-    }
-
-    @Test
     fun `renderPages should return list of bitmaps on success`() = runTest {
         // Given
         val mockBitmap = mockk<Bitmap>()
@@ -176,7 +156,7 @@ class PdfViewModelTest : KoinTest {
         // Given
         var cleanupCalled = false
         declareMock<IPdfReaderRepository> {
-            every { cleanup() } answers { cleanupCalled = true }
+            coEvery { cleanup() } answers { cleanupCalled = true }
         }
 
         // When

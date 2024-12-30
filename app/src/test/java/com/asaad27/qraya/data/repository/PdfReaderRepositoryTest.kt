@@ -12,6 +12,7 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkAll
 import junit.framework.TestCase.assertEquals
 import junit.framework.TestCase.assertTrue
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -112,7 +113,9 @@ class PdfReaderRepositoryTest {
 
     @After
     fun tearDown() {
-        repository.cleanup()
+        runBlocking {
+            repository.cleanup()
+        }
         unmockkAll()
     }
 
