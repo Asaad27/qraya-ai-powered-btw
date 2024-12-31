@@ -2,6 +2,7 @@ package com.asaad27.qraya.ui.pdf.viewmodel
 
 import android.graphics.Bitmap
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.asaad27.qraya.data.repository.IPdfReaderRepository
@@ -13,6 +14,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
 
 class PdfViewModel(
     private val pdfReaderRepository: IPdfReaderRepository,
@@ -93,9 +96,15 @@ class PdfViewModel(
     }
 
     public override fun onCleared() {
-        super.onCleared()
-        viewModelScope.launch {
-            pdfReaderRepository.cleanup()
+        runBlocking {
+            supervisorScope {
+                try {
+                    pdfReaderRepository.cleanup()
+                } catch (e: Exception) {
+                    Log.e("PdfViewModel", "Error during cleanup", e)
+                }
+            }
         }
+        super.onCleared()
     }
 }
