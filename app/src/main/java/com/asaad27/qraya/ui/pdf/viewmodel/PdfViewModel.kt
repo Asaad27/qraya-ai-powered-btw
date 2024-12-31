@@ -2,6 +2,7 @@ package com.asaad27.qraya.ui.pdf.viewmodel
 
 import android.graphics.Bitmap
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.asaad27.qraya.data.repository.IPdfReaderRepository
@@ -9,11 +10,12 @@ import com.asaad27.qraya.ui.pdf.model.PdfDocumentState
 import com.asaad27.qraya.ui.pdf.model.PdfLoadingState
 import com.asaad27.qraya.ui.pdf.model.PdfPageState
 import com.asaad27.qraya.ui.pdf.model.PdfUiState
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
 
 class PdfViewModel(
     private val pdfReaderRepository: IPdfReaderRepository,
@@ -29,32 +31,16 @@ class PdfViewModel(
         currentUri = uri
 
         viewModelScope.launch {
+            updateLoadingState(PdfLoadingState.Loading)
             try {
-                _pdfState.update {
-                    it.copy(
-                        pdfDocumentState = PdfDocumentState(
-                            loadingState = PdfLoadingState.Loading,
-                            pageCount = 0u
-                        ),
-                        currentPageState = PdfPageState(PdfLoadingState.Loading, 0u)
-                    )
-                }
-
                 pdfReaderRepository.loadPdf(uri).fold(
                     onSuccess = { pdfInfo ->
-                        _pdfState.update {
-                            it.copy(
-                                pdfDocumentState = PdfDocumentState(
-                                    loadingState = PdfLoadingState.Success,
-                                    pageCount = pdfInfo.pageCount.toUInt()
-                                ),
-                                currentPageState = PdfPageState(PdfLoadingState.Success, 0u)
-                            )
-                        }
+                        updateLoadingState(
+                            PdfLoadingState.Success,
+                            pdfInfo.pageCount.toUInt()
+                        )
                     },
-                    onFailure = { exception ->
-                        handleError(exception)
-                    }
+                    onFailure = { handleError(it) }
                 )
             } catch (e: Exception) {
                 handleError(e)
@@ -63,19 +49,34 @@ class PdfViewModel(
     }
 
     suspend fun renderPage(pageIndex: Int, width: Int, height: Int): Bitmap {
-        return pdfReaderRepository.renderPage(pageIndex, width, height).getOrThrow()
-    }
+        return pdfReaderRepository.renderPage(pageIndex, width, height)
+            .onSuccess { updatePageState(PdfLoadingState.Success, pageIndex.toUInt()) }
+            .getOrThrow()
+        }
 
     suspend fun renderPagesAsync(pages: List<Int>, width: Int, height: Int): List<Bitmap> {
-        return pdfReaderRepository.renderPages(pages, width, height).getOrThrow()
+        return pdfReaderRepository.renderPages(pages, width, height)
+            .onSuccess { updateLoadingState(PdfLoadingState.Success) }
+            .getOrThrow()
     }
 
-    fun renderPagesFlow(
-        pages: List<Int>,
-        width: Int,
-        height: Int
-    ): Flow<Result<Pair<Int, Bitmap>>> {
-        return pdfReaderRepository.renderPagesFlow(pages, width, height)
+    private fun updateLoadingState(state: PdfLoadingState, pageCount: UInt = _pdfState.value.pdfDocumentState.pageCount) {
+        _pdfState.update {
+            it.copy(
+                pdfDocumentState = it.pdfDocumentState.copy(
+                    loadingState = state,
+                    pageCount = pageCount
+                )
+            )
+        }
+    }
+
+    private fun updatePageState(state: PdfLoadingState, pageNumber: UInt) {
+        _pdfState.update {
+            it.copy(
+                currentPageState = PdfPageState(state, pageNumber)
+            )
+        }
     }
 
     private fun handleError(exception: Throwable) {
@@ -95,7 +96,15 @@ class PdfViewModel(
     }
 
     public override fun onCleared() {
+        runBlocking {
+            supervisorScope {
+                try {
+                    pdfReaderRepository.cleanup()
+                } catch (e: Exception) {
+                    Log.e("PdfViewModel", "Error during cleanup", e)
+                }
+            }
+        }
         super.onCleared()
-        pdfReaderRepository.cleanup()
     }
 }

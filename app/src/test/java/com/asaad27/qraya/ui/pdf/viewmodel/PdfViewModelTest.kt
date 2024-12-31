@@ -6,18 +6,18 @@ import com.asaad27.qraya.data.model.PdfInfo
 import com.asaad27.qraya.data.repository.IPdfReaderRepository
 import com.asaad27.qraya.ui.pdf.model.PdfLoadingState
 import io.mockk.coEvery
-import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkClass
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.After
-import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -74,8 +74,10 @@ class PdfViewModelTest : KoinTest {
 
         // Then
         val currentState = viewModel.pdfState.value
-        assertEquals(PdfLoadingState.Success, currentState.pdfDocumentState.loadingState)
-        assertEquals(5u, currentState.pdfDocumentState.pageCount)
+        assertThat(currentState.pdfDocumentState.loadingState)
+            .isEqualTo(PdfLoadingState.Success)
+        assertThat(currentState.pdfDocumentState.pageCount)
+            .isEqualTo(5u)
     }
 
     @Test
@@ -93,8 +95,10 @@ class PdfViewModelTest : KoinTest {
 
         // Then
         val currentState = viewModel.pdfState.value
-        assert(currentState.pdfDocumentState.loadingState is PdfLoadingState.Error)
-        assertEquals(0u, currentState.pdfDocumentState.pageCount)
+        assertThat(currentState.pdfDocumentState.loadingState)
+            .isInstanceOf(PdfLoadingState.Error::class.java)
+        assertThat(currentState.pdfDocumentState.pageCount)
+            .isEqualTo(0u)
     }
 
     @Test
@@ -111,27 +115,8 @@ class PdfViewModelTest : KoinTest {
         val result = viewModel.renderPage(pageIndex = 0, width = 100, height = 100)
 
         // Then
-        assertEquals(mockBitmap, result)
-    }
-
-    @Test
-    fun `renderPagesFlow should emit bitmaps correctly`() = runTest {
-        // Given
-        val mockBitmap = mockk<Bitmap>()
-        val pages = listOf(0, 1)
-        declareMock<IPdfReaderRepository> {
-            every {
-                renderPagesFlow(pages = pages, width = 100, height = 100)
-            } returns flowOf(Result.success(0 to mockBitmap))
-        }
-
-        // When
-        val flow = viewModel.renderPagesFlow(pages, 100, 100)
-
-        // Then
-        flow.collect { result ->
-            assertEquals(Result.success(0 to mockBitmap), result)
-        }
+        assertThat(result)
+            .isEqualTo(mockBitmap)
     }
 
     @Test
@@ -149,7 +134,8 @@ class PdfViewModelTest : KoinTest {
         val result = viewModel.renderPagesAsync(pages = pages, width = 100, height = 100)
 
         // Then
-        assertEquals(listOf(mockBitmap, mockBitmap), result)
+        assertThat(result)
+            .isEqualTo(listOf(mockBitmap, mockBitmap))
     }
 
     @Test
@@ -163,12 +149,13 @@ class PdfViewModelTest : KoinTest {
         }
 
         // When & Then
-        try {
-            viewModel.renderPage(0, 100, 100)
-            assert(false) { "Expected exception was not thrown" }
-        } catch (e: RuntimeException) {
-            assertEquals("Render failed", e.message)
+        assertThatThrownBy {
+            runBlocking {
+                viewModel.renderPage(0, 100, 100)
+            }
         }
+            .isInstanceOf(RuntimeException::class.java)
+            .hasMessage("Render failed")
     }
 
     @Test
@@ -176,14 +163,17 @@ class PdfViewModelTest : KoinTest {
         // Given
         var cleanupCalled = false
         declareMock<IPdfReaderRepository> {
-            every { cleanup() } answers { cleanupCalled = true }
+            coEvery { cleanup() } answers { cleanupCalled = true }
         }
 
         // When
         viewModel.onCleared()
+        testDispatcher.scheduler.advanceUntilIdle() // Wait for the coroutine to complete
 
         // Then
-        assert(cleanupCalled) { "Cleanup was not called" }
+        assertThat(cleanupCalled)
+            .withFailMessage("Cleanup should have been called")
+            .isTrue()
     }
 
     @Test
@@ -203,8 +193,10 @@ class PdfViewModelTest : KoinTest {
 
         // Then
         val currentState = viewModel.pdfState.value
-        assertEquals(PdfLoadingState.Success, currentState.pdfDocumentState.loadingState)
-        assertEquals(1u, currentState.pdfDocumentState.pageCount)
+        assertThat(currentState.pdfDocumentState.loadingState)
+            .isEqualTo(PdfLoadingState.Success)
+        assertThat(currentState.pdfDocumentState.pageCount)
+            .isEqualTo(1u)
     }
 
     @Test
@@ -225,7 +217,9 @@ class PdfViewModelTest : KoinTest {
         testDispatcher.scheduler.advanceUntilIdle()
 
         // Then
-        assertEquals(1, loadCount)
+        assertThat(loadCount)
+            .withFailMessage("PDF should only be loaded once for the same URI, found: $loadCount")
+            .isEqualTo(1)
     }
 
     @Test
@@ -243,16 +237,23 @@ class PdfViewModelTest : KoinTest {
 
         // Then
         val currentState = viewModel.pdfState.value
-        assert(currentState.pdfDocumentState.loadingState is PdfLoadingState.Error)
+        assertThat(currentState.pdfDocumentState.loadingState)
+            .isInstanceOf(PdfLoadingState.Error::class.java)
+        assertThat(currentState.pdfDocumentState.pageCount)
+            .isEqualTo(0u)
     }
 
     @Test
     fun `initial pdfState should be in Idle state`() {
         // Then
         val currentState = viewModel.pdfState.value
-        assertEquals(PdfLoadingState.Initial, currentState.pdfDocumentState.loadingState)
-        assertEquals(0u, currentState.pdfDocumentState.pageCount)
-        assertEquals(PdfLoadingState.Initial, currentState.currentPageState.loadingState)
-        assertEquals(0u, currentState.currentPageState.pageNumber)
+        assertThat(currentState.pdfDocumentState.loadingState)
+            .isEqualTo(PdfLoadingState.Initial)
+        assertThat(currentState.pdfDocumentState.pageCount)
+            .isEqualTo(0u)
+        assertThat(currentState.currentPageState.loadingState)
+            .isEqualTo(PdfLoadingState.Initial)
+        assertThat(currentState.currentPageState.pageNumber)
+            .isEqualTo(0u)
     }
 }
