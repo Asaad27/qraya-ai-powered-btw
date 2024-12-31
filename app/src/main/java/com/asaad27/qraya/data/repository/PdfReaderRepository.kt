@@ -47,6 +47,8 @@ class PdfReaderRepository(
 
     override suspend fun loadPdf(uri: Uri): Result<PdfInfo> = withContext(dispatcher) {
         runCatching {
+            cleanup()
+
             currentUri = uri
 
             val fd = applicationContext.contentResolver.openFileDescriptor(uri, "r")
@@ -179,6 +181,24 @@ class PdfReaderRepository(
             runCatching { renderer.close() }
                 .onFailure { Log.e("PdfReaderRepository", "Error closing pooled renderer", it) }
         }
+    }
+
+    internal fun getActiveRenderersCount() = activeRenderers.size
+    internal fun getPooledRenderersCount(): Int {
+        var count = 0
+        val tempList = mutableListOf<IPdfRenderer>()
+
+        while (true) {
+            val renderer = rendererPool.tryReceive().getOrNull() ?: break
+            tempList.add(renderer)
+            count++
+        }
+
+        tempList.forEach { renderer ->
+            rendererPool.trySend(renderer)
+        }
+
+        return count
     }
 
     private suspend fun <T> withRenderer(timeout: Duration = 10.seconds , block: suspend (IPdfRenderer) -> T): T {
