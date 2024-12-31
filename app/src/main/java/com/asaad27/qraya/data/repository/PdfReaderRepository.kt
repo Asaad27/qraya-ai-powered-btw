@@ -20,8 +20,11 @@ import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import okio.Timeout
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.DurationUnit
 import kotlin.time.toDuration
 
@@ -178,12 +181,16 @@ class PdfReaderRepository(
         }
     }
 
-    private suspend fun <T> withRenderer(block: suspend (IPdfRenderer) -> T): T {
-        val renderer = rendererPool.receive()
+    private suspend fun <T> withRenderer(timeout: Duration = 10.seconds , block: suspend (IPdfRenderer) -> T): T {
+        val renderer = withTimeout(timeout) {
+            rendererPool.receive()
+        }
         try {
             return block(renderer)
         } finally {
-            rendererPool.send(renderer)
+            withTimeout(timeout) {
+                rendererPool.send(renderer)
+            }
         }
     }
 }
