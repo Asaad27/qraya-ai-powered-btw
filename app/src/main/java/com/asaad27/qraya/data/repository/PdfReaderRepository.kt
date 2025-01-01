@@ -9,16 +9,22 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.asaad27.qraya.data.model.PdfInfo
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -36,11 +42,20 @@ class PdfReaderRepository(
     private val matrixFactory: () -> Matrix = { Matrix() }
 ) : IPdfReaderRepository {
 
-    private val rendererPoolSize: Int = Runtime.getRuntime().availableProcessors()
+    internal val rendererPoolSize: Int = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(1)
     private val rendererPool = Channel<IPdfRenderer>(Channel.UNLIMITED)
     private val activeRenderers = ConcurrentLinkedQueue<IPdfRenderer>()
+    private val nativeOperationLock = Mutex()
+    private val cleanupScope = CoroutineScope(SupervisorJob() + dispatcher)
+
     private var currentUri: Uri? = null
     private var fileDescriptor: ParcelFileDescriptor? = null
+
+    init {
+        cleanupScope.coroutineContext.job.invokeOnCompletion {
+            runBlocking { cleanup() }
+        }
+    }
 
     override suspend fun loadPdf(uri: Uri): Result<PdfInfo> = withContext(dispatcher) {
         runCatching {
@@ -94,7 +109,7 @@ class PdfReaderRepository(
 
             Log.d("PdfReaderRepository", "started Rendering ${pages.size} pages in $batchSize batches")
 
-            coroutineScope {
+            supervisorScope {
                 batches.map { batch ->
                     async {
                         withRenderer { renderer ->
@@ -124,7 +139,7 @@ class PdfReaderRepository(
         val batchSize = (pages.size + rendererPoolSize - 1) / rendererPoolSize
         val batches = pages.chunked(batchSize)
 
-        coroutineScope {
+        supervisorScope  {
             batches.forEach { batch ->
                 launch {
                     withRenderer { renderer ->
@@ -138,24 +153,26 @@ class PdfReaderRepository(
         }
     }.flowOn(dispatcher)
 
-
-    private fun renderPageInternal(
+    private suspend fun renderPageInternal(
         pageIndex: Int,
         width: Int,
         height: Int,
         renderer: IPdfRenderer
     ): Result<Bitmap> = runCatching {
-        Log.d("PdfReaderRepository", "Rendering page $pageIndex")
-        renderer.openPage(pageIndex).use { page ->
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            val matrix = matrixFactory().apply {
-                setScale(width.toFloat() / page.width, height.toFloat() / page.height)
+        val rendererId = System.identityHashCode(renderer)
+        Log.d("PdfReaderRepository", "[$rendererId] Opening page $pageIndex")
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        nativeOperationLock.withLock {
+            renderer.openPage(pageIndex).use { page ->
+                Log.d("PdfReaderRepository", "[$rendererId] Started rendering page $pageIndex")
+                val matrix = matrixFactory().apply {
+                    setScale(width.toFloat() / page.width, height.toFloat() / page.height)
+                }
+                page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                Log.d("PdfReaderRepository", "[$rendererId] Finished rendering page $pageIndex")
+                bitmap
             }
-            page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            bitmap
         }
-    }.also {
-        Log.d("PdfReaderRepository", "Page $pageIndex rendering completed")
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -198,15 +215,24 @@ class PdfReaderRepository(
         return count
     }
 
-    private suspend fun <T> withRenderer(timeout: Duration = 10.seconds , block: suspend (IPdfRenderer) -> T): T {
-        val renderer = withTimeout(timeout) {
-            rendererPool.receive()
-        }
+    private suspend fun <T> withRenderer(timeout: Duration = 10.seconds, block: suspend (IPdfRenderer) -> T): T {
+        var renderer: IPdfRenderer? = null
         try {
+            renderer = withTimeout(timeout) {
+                rendererPool.receive()
+            }
             return block(renderer)
         } finally {
-            withTimeout(timeout) {
-                rendererPool.send(renderer)
+            renderer?.let { safeRenderer ->
+                try {
+                    withTimeout(timeout) {
+                        rendererPool.send(safeRenderer)
+                    }
+                } catch (e: Exception) {
+                    runCatching { safeRenderer.close() }
+                    activeRenderers.remove(safeRenderer)
+                    Log.e("PdfReaderRepository", "Failed to return renderer to pool", e)
+                }
             }
         }
     }

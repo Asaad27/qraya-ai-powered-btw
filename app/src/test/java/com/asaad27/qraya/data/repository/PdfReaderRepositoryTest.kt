@@ -16,6 +16,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -174,7 +176,7 @@ class PdfReaderRepositoryTest {
             .withFailMessage("Result should be successful, found: ${result.exceptionOrNull()?.message}")
             .isTrue
         assertThat(repository.getActiveRenderersCount())
-            .isEqualTo(Runtime.getRuntime().availableProcessors())
+            .isEqualTo(repository.rendererPoolSize)
     }
 
     @Test
@@ -189,7 +191,7 @@ class PdfReaderRepositoryTest {
 
         // Then
         // After initialization, all renderers should be both active and in the pool
-        val expectedCount = Runtime.getRuntime().availableProcessors()
+        val expectedCount = repository.rendererPoolSize
         val activeCount = repository.getActiveRenderersCount()
         val poolCount = repository.getPooledRenderersCount()
         assertThat(activeCount)
@@ -292,7 +294,7 @@ class PdfReaderRepositoryTest {
         val secondLoadRenderers = repository.getActiveRenderersCount()
 
         // Then
-        val expectedCount = Runtime.getRuntime().availableProcessors()
+        val expectedCount = repository.rendererPoolSize
         assertThat(firstLoadRenderers)
             .withFailMessage("Expected $expectedCount renderers for first load but found $firstLoadRenderers")
             .isEqualTo(expectedCount)
@@ -323,6 +325,98 @@ class PdfReaderRepositoryTest {
             .isEqualTo(initialPoolCount)
     }
 
+    @Test
+    fun `resources are cleaned up when coroutine is cancelled`() = runTest(testDispatcher) {
+        // Given
+        val uri = mockk<Uri>()
+        val fileDescriptor = mockk<ParcelFileDescriptor>(relaxed = true)
+        every { context.contentResolver.openFileDescriptor(uri, "r") } returns fileDescriptor
+
+        repository.loadPdf(uri).getOrThrow()
+        val initialPoolCount = repository.getPooledRenderersCount()
+
+        // When - Start rendering and cancel immediately
+        val job = launch {
+            repository.renderPages((0..100).toList(), 100, 100)
+        }
+        job.cancel()
+
+        // Then
+        // Wait a bit for cleanup
+        delay(100)
+        val finalPoolCount = repository.getPooledRenderersCount()
+        assertThat(finalPoolCount)
+            .withFailMessage("All renderers should be returned or cleaned up after cancellation, found: $finalPoolCount, expected: $initialPoolCount")
+            .isEqualTo(initialPoolCount)
+    }
+
+    @Test
+    fun `no memory leak when loading multiple PDFs`() = runTest(testDispatcher) {
+        // Given
+        val uris = List(5) { mockk<Uri>() }
+        val fileDescriptor = mockk<ParcelFileDescriptor>(relaxed = true)
+        every { context.contentResolver.openFileDescriptor(any(), any()) } returns fileDescriptor
+
+        // When - Load multiple PDFs in sequence
+        uris.forEach { uri ->
+            repository.loadPdf(uri).getOrThrow()
+
+            // Render some pages
+            repository.renderPages((0..2).toList(), 100, 100)
+
+            // Track memory before and after
+            val memoryBefore = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()
+            System.gc()
+            val memoryAfter = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()
+
+            // Then - Memory should not grow significantly
+            assertThat(memoryAfter).isLessThanOrEqualTo((memoryBefore * 1.1).toLong()) //  10% variance
+        }
+    }
+
+    @Test
+    fun `concurrent errors don't leave renderers in inconsistent state`() = runTest(testDispatcher) {
+        // Given
+        val uri = mockk<Uri>()
+        val fileDescriptor = mockk<ParcelFileDescriptor>(relaxed = true)
+        every { context.contentResolver.openFileDescriptor(uri, "r") } returns fileDescriptor
+
+        // Create a renderer that fails randomly
+        val failingRenderer = object : TestPdfRenderer() {
+            override fun openPage(index: Int): IPdfPage = object : TestPdfPage() {
+                override fun render(bitmap: Bitmap, dest: Rect?, transform: Matrix?, renderMode: Int) {
+                    if (Math.random() < 0.5) throw RuntimeException("Random failure")
+                }
+            }
+        }
+
+        val repoWithFailingRenderer = PdfReaderRepository(
+            applicationContext = context,
+            dispatcher = testDispatcher,
+            rendererFactory = { failingRenderer },
+            matrixFactory = { mockk(relaxed = true) }
+        )
+
+        // When
+        repoWithFailingRenderer.loadPdf(uri).getOrThrow()
+        val initialPoolCount = repoWithFailingRenderer.getPooledRenderersCount()
+
+        // Run multiple renders concurrently
+        coroutineScope {
+            repeat(10) {
+                launch {
+                    runCatching { repoWithFailingRenderer.renderPage(it, 100, 100) }
+                }
+            }
+        }
+
+        // Then
+        val finalPoolCount = repoWithFailingRenderer.getPooledRenderersCount()
+        assertThat(finalPoolCount)
+            .withFailMessage("Pool should maintain consistent count even after errors")
+            .isEqualTo(initialPoolCount)
+    }
+
     @After
     fun tearDown() {
         runBlocking {
@@ -331,12 +425,12 @@ class PdfReaderRepositoryTest {
         unmockkAll()
     }
 
-    private class TestPdfRenderer(override val pageCount: Int = 1) : IPdfRenderer {
+    private open class TestPdfRenderer(override val pageCount: Int = 1) : IPdfRenderer {
         override fun openPage(index: Int): IPdfPage = TestPdfPage()
         override fun close() {}
     }
 
-    private class TestPdfPage : IPdfPage {
+    private open class TestPdfPage : IPdfPage {
         override val width: Int = 100
         override val height: Int = 100
 
