@@ -2,16 +2,16 @@ package com.asaad27.qraya.ui.pdf.screen
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -24,109 +24,172 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.tooling.preview.Preview
 import coil3.compose.AsyncImage
 import com.asaad27.qraya.ui.pdf.model.PdfLoadingState
+import com.asaad27.qraya.ui.pdf.model.PdfPageState
 import com.asaad27.qraya.ui.pdf.viewmodel.PdfViewModel
 import org.koin.androidx.compose.koinViewModel
 
-//todo: this is just an example, fix later
-
-@SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
 fun PdfViewerScreen(
     modifier: Modifier = Modifier,
     viewModel: PdfViewModel = koinViewModel()
 ) {
-    var pdfUri by remember { mutableStateOf<Uri?>(null) }
-    var renderedPages by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
     val pdfState by viewModel.pdfState.collectAsState()
 
+    when (pdfState.pdfDocumentState.loadingState) {
+        PdfLoadingState.Initial -> PdfInitialState(
+            onLoadPdf = { viewModel.loadPdf(it) }
+        )
+
+        PdfLoadingState.Loading -> PdfLoadingState()
+        is PdfLoadingState.Error -> PdfErrorState(
+            error = (pdfState.pdfDocumentState.loadingState as PdfLoadingState.Error).message
+        )
+
+        PdfLoadingState.Success -> PdfContentState(
+            currentPageState = pdfState.currentPageState,
+            onRenderPage = { page, width, height ->
+                viewModel.renderPage(page.toInt(), width, height)
+            }
+        )
+    }
+}
+
+@Composable
+fun PdfInitialState(
+    modifier: Modifier = Modifier,
+    onLoadPdf: (Uri) -> Unit
+) {
     val choosePdfLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let(onLoadPdf)
+    }
+
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
     ) {
-        pdfUri = it
-    }
-
-    LaunchedEffect(pdfUri) {
-        pdfUri?.let { uri ->
-            viewModel.loadPdf(uri)
-        }
-    }
-
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val boxWidth = constraints.maxWidth
-        val boxHeight = constraints.maxHeight
-
-        LaunchedEffect(pdfState.pdfDocumentState.loadingState, boxWidth, boxHeight) {
-            if (pdfState.pdfDocumentState.loadingState is PdfLoadingState.Success &&
-                boxWidth > 0 && boxHeight > 0
-            ) {
-                pdfUri?.let {
-                    renderedPages = viewModel.renderPagesAsync(
-                        pages = (0 until pdfState.pdfDocumentState.pageCount.toInt()).toList(),
-                        width = boxWidth,
-                        height = boxHeight
-                    )
-                }
-            }
-        }
-
-
-        if (pdfUri == null) {
-            Box(
-                modifier = modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Button(
-                    onClick = {
-                        choosePdfLauncher.launch("application/pdf")
-                    }
-                ) {
-                    Text("load the PiDi F madafaka")
-                }
-            }
-        } else {
-            Column(
-                modifier = modifier.fillMaxSize(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                when (pdfState.pdfDocumentState.loadingState) {
-                    is PdfLoadingState.Loading -> {
-                        CircularProgressIndicator()
-                    }
-
-                    is PdfLoadingState.Error -> {
-                        Text("Error: ${(pdfState.pdfDocumentState.loadingState as PdfLoadingState.Error).message}")
-                    }
-
-                    is PdfLoadingState.Success -> {
-                        LazyColumn(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
-                        ) {
-                            items(renderedPages) { page ->
-                                PdfPage(page = page)
-                            }
-                        }
-                    }
-
-                    PdfLoadingState.Initial -> Text("there is nothing yet madafaka")
-                }
-
-            }
+        Button(onClick = { choosePdfLauncher.launch("application/pdf") }) {
+            Text("Select PDF")
         }
     }
 }
 
 @Composable
-fun PdfPage(
+fun PdfLoadingState(
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        CircularProgressIndicator()
+    }
+}
+
+@Composable
+fun PdfErrorState(
+    modifier: Modifier = Modifier,
+    error: String
+) {
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Text("Error: $error")
+    }
+}
+
+@SuppressLint("UnusedBoxWithConstraintsScope")
+@Composable
+fun PdfContentState(
+    modifier: Modifier = Modifier,
+    currentPageState: PdfPageState,
+    onRenderPage: suspend (UInt, Int, Int) -> Bitmap
+) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        var currentPage by remember { mutableStateOf<Bitmap?>(null) }
+
+        LaunchedEffect(currentPageState.pageNumber, constraints.maxWidth, constraints.maxHeight) {
+            currentPage = onRenderPage(
+                currentPageState.pageNumber,
+                constraints.maxWidth,
+                constraints.maxHeight
+            )
+        }
+
+        when (currentPageState.loadingState) {
+            PdfLoadingState.Loading -> PdfLoadingState()
+            is PdfLoadingState.Error -> PdfErrorState(
+                error = currentPageState.loadingState.message
+            )
+
+            PdfLoadingState.Success -> currentPage?.let { bitmap ->
+                PdfPage(page = bitmap)
+            }
+
+            PdfLoadingState.Initial -> Unit
+        }
+    }
+}
+
+@Composable
+private fun PdfPage(
     modifier: Modifier = Modifier,
     page: Bitmap
 ) {
     AsyncImage(
         modifier = modifier.fillMaxWidth(),
-        model = page,
-        contentDescription = "9ra w zid 9ra",
+        model = if (LocalInspectionMode.current) TestModels.previewBitmap else page,
+        contentDescription = "PDF page",
     )
+}
+
+private object TestModels {
+    val previewBitmap = Bitmap.createBitmap(595, 842, Bitmap.Config.ARGB_8888).apply {
+        val canvas = Canvas(this)
+        canvas.drawColor(Color.LTGRAY)
+        val paint = Paint().apply {
+            color = Color.BLACK
+            textSize = 50f
+        }
+        canvas.drawText("Preview PDF Page", 100f, 400f, paint)
+    }
+}
+
+@Preview
+@Composable
+private fun PdfPagePreview() {
+    val mockBitmap = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
+    PdfPage(page = mockBitmap)
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun PdfInitialStatePreview() {
+    PdfInitialState(onLoadPdf = {})
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun PdfLoadingStatePreview() {
+    PdfLoadingState()
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun PdfErrorStatePreview() {
+    PdfErrorState(error = "Failed to load PDF")
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun PdfContentStatePreview() {
+    Box(modifier = Modifier.fillMaxSize()) {
+        PdfPage(page = TestModels.previewBitmap)
+    }
 }
