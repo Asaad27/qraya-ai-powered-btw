@@ -1,6 +1,5 @@
 package com.asaad27.qraya.ui.pdf.screen
 
-import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -9,7 +8,6 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
@@ -24,8 +22,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.IntSize
 import coil3.compose.AsyncImage
 import com.asaad27.qraya.ui.pdf.model.PdfLoadingState
 import com.asaad27.qraya.ui.pdf.model.PdfPageState
@@ -41,15 +42,16 @@ fun PdfViewerScreen(
 
     when (pdfState.pdfDocumentState.loadingState) {
         PdfLoadingState.Initial -> PdfInitialState(
+            modifier = modifier,
             onLoadPdf = { viewModel.loadPdf(it) }
         )
-
-        PdfLoadingState.Loading -> PdfLoadingState()
+        PdfLoadingState.Loading -> PdfLoadingState(modifier = modifier)
         is PdfLoadingState.Error -> PdfErrorState(
+            modifier = modifier,
             error = (pdfState.pdfDocumentState.loadingState as PdfLoadingState.Error).message
         )
-
         PdfLoadingState.Success -> PdfContentState(
+            modifier = modifier,
             currentPageState = pdfState.currentPageState,
             onRenderPage = { page, width, height ->
                 viewModel.renderPage(page.toInt(), width, height)
@@ -104,22 +106,28 @@ fun PdfErrorState(
     }
 }
 
-@SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
 fun PdfContentState(
     modifier: Modifier = Modifier,
     currentPageState: PdfPageState,
     onRenderPage: suspend (UInt, Int, Int) -> Bitmap
 ) {
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        var currentPage by remember { mutableStateOf<Bitmap?>(null) }
+    var size by remember { mutableStateOf(IntSize.Zero) }
+    var currentPage by remember { mutableStateOf<Bitmap?>(null) }
 
-        LaunchedEffect(currentPageState.pageNumber, constraints.maxWidth, constraints.maxHeight) {
-            currentPage = onRenderPage(
-                currentPageState.pageNumber,
-                constraints.maxWidth,
-                constraints.maxHeight
-            )
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .onSizeChanged { size = it }
+    ) {
+        LaunchedEffect(currentPageState.pageNumber, size.width, size.height) {
+            if (size.width > 0 && size.height > 0) {
+                currentPage = onRenderPage(
+                    currentPageState.pageNumber,
+                    size.width,
+                    size.height
+                )
+            }
         }
 
         when (currentPageState.loadingState) {
@@ -127,11 +135,9 @@ fun PdfContentState(
             is PdfLoadingState.Error -> PdfErrorState(
                 error = currentPageState.loadingState.message
             )
-
             PdfLoadingState.Success -> currentPage?.let { bitmap ->
                 PdfPage(page = bitmap)
             }
-
             PdfLoadingState.Initial -> Unit
         }
     }
@@ -146,6 +152,7 @@ private fun PdfPage(
         modifier = modifier.fillMaxWidth(),
         model = if (LocalInspectionMode.current) TestModels.previewBitmap else page,
         contentDescription = "PDF page",
+        contentScale = ContentScale.FillWidth
     )
 }
 
@@ -164,7 +171,7 @@ private object TestModels {
 @Preview
 @Composable
 private fun PdfPagePreview() {
-    val mockBitmap = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
+    val mockBitmap = Bitmap.createBitmap(595, 842, Bitmap.Config.ARGB_8888)
     PdfPage(page = mockBitmap)
 }
 
@@ -189,7 +196,10 @@ private fun PdfErrorStatePreview() {
 @Preview(showBackground = true)
 @Composable
 private fun PdfContentStatePreview() {
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+    ) {
         PdfPage(page = TestModels.previewBitmap)
     }
 }
